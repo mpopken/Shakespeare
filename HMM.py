@@ -46,64 +46,6 @@ class HiddenMarkovModel:
         self.O = O
         self.A_start = np.ones(self.L) / self.L
 
-    def viterbi(self, x):
-        '''
-        Uses the Viterbi algorithm to find the max probability state 
-        sequence corresponding to a given input sequence.
-
-        Arguments:
-            x:          Input sequence in the form of a list of length M,
-                        consisting of integers ranging from 0 to D - 1.
-
-        Returns:
-            max_seq:    State sequence corresponding to x with the highest
-                        probability.
-        '''
-
-        M = len(x)      # Length of sequence.
-
-        # The (i, j)^th elements of probs and seqs are the max probability
-        # of the prefix of length i ending in state j and the prefix
-        # that gives this probability, respectively.
-        #
-        # For instance, probs[1][0] is the probability of the prefix of
-        # length 1 ending in state 0.
-        probs = [[0. for _ in range(self.L)] for _ in range(M + 1)]
-        seqs = [['' for _ in range(self.L)] for _ in range(M + 1)]
-
-        # First column
-        for row in range(self.L):
-            probs[0][row] = self.A_start[row]
-
-        # All other columns
-        for col in range(M):
-            # calculate the probabilities of the column
-            # using the probabilities from the last column
-            for row in range(self.L):
-                # maximize last row * transition matrix * observation matrix
-                max_val = 0
-                max_k = -1
-                for k in range(self.L):
-                    val = probs[col][k] * self.A[k][row] * self.O[k][x[col]]
-                    if val > max_val:
-                        max_val = val
-                        max_k = k
-                probs[col + 1][row] = max_val
-
-                seqs[col + 1][row] = seqs[col][max_k] + str(max_k)
-                if col + 1 == M:
-                    final_val = 0
-                    final_ind = -1
-                    # Calculate the last column
-                    for k in range(self.L):
-                        val = probs[col][k] * self.A[k][row] * self.O[k][x[col]]
-                        if val > final_val:
-                            final_val = val
-                            final_ind = k
-        print('A: ', self.A)
-        print('O: ', self.O)
-        return seqs[M][final_ind]
-
     def forward(self, x, normalize=False):
         '''
         Uses the forward algorithm to calculate the alpha probability
@@ -139,7 +81,6 @@ class HiddenMarkovModel:
             alphas[0][z] = self.A_start[z]
             alphas[1][z] = self.O[z][x[0]] * self.A_start[z]
 
-        col_sums = []
         # Fill in the rest
         for i in range(2, M + 1):
             for j in range(self.L):
@@ -147,6 +88,7 @@ class HiddenMarkovModel:
                 alphas[i][j] = self.O[j][x[i-1]] * s
             if normalize:
                 denom = sum(alphas[i])
+                assert denom != 0, 'Denominator is zero!'
                 for z in range(self.L):
                     alphas[i][z] = alphas[i][z] / denom
 
@@ -189,6 +131,7 @@ class HiddenMarkovModel:
                 betas[i][j] = sum(arr)
             if normalize:
                 denom = sum(betas[i])
+                assert denom != 0, 'Denominator is zero!'
                 for z in range(self.L):
                     betas[i][z] = betas[i][z] / denom
 
@@ -246,22 +189,25 @@ class HiddenMarkovModel:
                     tot = 0
                     for j in range(self.L):
                         tot += sum(denom[j])
+                    assert tot != 0, 'Divide by zero!'
                     denom /= tot
 
                     for i in range(self.L):
                         for j in range(self.L):
                             A_num[i][j] += denom[i][j]
 
+            assert (A_denom == 0).sum() == 0, 'Denominator is zero!'
+            assert (O_denom == 0).sum() == 0, 'Denominator is zero!'
             self.A = A_num / A_denom
             self.O = O_num / O_denom
 
-    def generate_emission(self):
+    def generate_emission(self, n_syl, first_word_bank=None):
         '''
         Generates an emission of length M, assuming that the starting state
         is chosen uniformly at random. 
 
         Arguments:
-            M:          Length of the emission to generate.
+            n_syl:      Number of syllables in the generation.
 
         Returns:
             emission:   The randomly generated emission as a list.
@@ -273,17 +219,51 @@ class HiddenMarkovModel:
         syls, _, i2w = parse_syllable_list('Syllable_dictionary.txt')
         syllable_count = 0
 
+        # Keep track of our emissions and states as we construct them.
         emission = []
         states = []
 
-        # Get the initial state and emission
-        states.append(np.random.choice(self.L, p=self.A_start))
-        emission.append(np.random.choice(self.D, p=self.O[states[-1]]))
-        syllable_count += syls[i2w[emission[-1]]][0]
-        
+        # If we don't specify restrictions on the first word, then we pick it
+        # based on the regular HMM algorithm.
+        if first_word_bank is None:
+            states.append(np.random.choice(self.L, p=self.A_start))
+            emission.append(np.random.choice(self.D, p=self.O[states[-1]]))
+            syllable_count += syls[i2w[emission[-1]]][0]
+        # If it is specified, then we have to pick the first word from the given
+        # word bank.
+        else:
+            # First we have to adjust the A_start probabilities so that states
+            # with lots of valid words have a higher probability of selection.
+            mod_A_start = np.zeros(self.L)
+            for z in range(self.L):
+                total = count = 0
+                for idx in range(self.D):
+                    total += self.O[z][idx]
+                    count += self.O[z][idx] if idx in first_word_bank else 0
+                assert total != 0, 'Divide by zero!'
+                mod_A_start[z] = self.A_start[z] * count / total
+            assert mod_A_start.sum() != 0, 'Divide by zero!'
+            mod_A_start /= mod_A_start.sum()
+
+            states.append(np.random.choice(self.L, p=mod_A_start))
+
+            # Now that we have the state, we have to adjust the probabilities
+            # of each word given this state to only allow legal words.
+            obs_prob = self.O[states[-1]]
+            assert len(obs_prob) == self.D
+            for idx in range(self.D):
+                if idx not in first_word_bank:
+                    obs_prob[idx] = 0
+            assert obs_prob.sum() != 0, 'Divide by zero!'
+            obs_prob /= obs_prob.sum()
+
+            emission.append(np.random.choice(self.D, p=obs_prob))
+
+        # After we have set the first word to rhyme, we can build the rest of
+        # the line afterword using the regular HMM algorithm.        
         while True:
             # Make sure we never have more than 10 syllables.
-            assert syllable_count < 10  
+            assert syllable_count < n_syl
 
             # Add a state and a word to the line.
             states.append(np.random.choice(self.L, p=self.A[states[-1]]))
@@ -293,7 +273,7 @@ class HiddenMarkovModel:
 
             # Check the end cases to make sure there are ten syllables in
             # every line. 
-            if syllable_count > 10:
+            if syllable_count > n_syl:
                 # The last word may have a special end syllable count to still
                 # make it valid.
                 if syls[i2w[emission[-1]]][2] is not None:
@@ -303,7 +283,7 @@ class HiddenMarkovModel:
                 
                 # If it became valid, break and return; otherwise get rid of
                 # the last word and try again.
-                if syllable_count != 10:
+                if syllable_count != n_syl:
                     states = states[:-1]
                     emission = emission[:-1]
                     syllable_count = prev_syl_count
@@ -311,7 +291,7 @@ class HiddenMarkovModel:
                 else:
                     break
             
-            if syllable_count == 10:
+            if syllable_count == n_syl:
                 # If we have a proper syllable count and no funny stuff with
                 # the end word syllable counts, break and return.
                 if syls[i2w[emission[-1]]][2] is None:

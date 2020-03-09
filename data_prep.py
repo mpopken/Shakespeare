@@ -19,7 +19,7 @@ def get_sonnets_from_file(path):
     sonnets = full_text.split('\n\n')
     sonnets = [s.strip().split('\n') for s in sonnets if len(s) > 10]
     
-    # Remove any whitespace from all of the line.
+    # Remove any whitespace from all of the lines
     sonnets = [[l.strip() for l in s if len(l) > 10] for s in sonnets]
     
     # Split all lines into list of words    
