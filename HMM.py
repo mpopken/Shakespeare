@@ -1,5 +1,6 @@
 import numpy as np
-from data_prep import parse_syllable_list
+from data_prep import parse_syllable_list, rhyme
+
 
 class HiddenMarkovModel:
     '''
@@ -215,22 +216,35 @@ class HiddenMarkovModel:
             states:     The randomly generated states as a list.
         '''
 
+        # Make sure the input is a valid type.
+        assert type(n_syl) is int and n_syl > 0
+        assert first_word_bank is None or (type(first_word_bank) is list  and
+                                           len(first_word_bank) > 0       and
+                                           type(first_word_bank[0]) is int   )
+
         # Get the syllable list to make sure all lines are 10 syllables long.
-        syls, _, i2w = parse_syllable_list('Syllable_dictionary.txt')
+        syls, w2i, i2w = parse_syllable_list('Syllable_dictionary.txt')
         syllable_count = 0
 
         # Keep track of our emissions and states as we construct them.
-        emission = []
-        states = []
+        emission = [0]
+        states = [0]
 
         # If we don't specify restrictions on the first word, then we pick it
         # based on the regular HMM algorithm.
         if first_word_bank is None:
-            states.append(np.random.choice(self.L, p=self.A_start))
-            emission.append(np.random.choice(self.D, p=self.O[states[-1]]))
+            states[0] = np.random.choice(self.L, p=self.A_start)
+            emission[0] = np.random.choice(self.D, p=self.O[states[0]])
+
+            # If the first word is not rhymable, try again.
+            while not rhyme(i2w[emission[0]], w2i.keys()):
+                states[0] = np.random.choice(self.L, p=self.A_start)
+                emission[0] = np.random.choice(self.D, p=self.O[states[0]])
+
             syllable_count += syls[i2w[emission[-1]]][0]
-        # If it is specified, then we have to pick the first word from the given
-        # word bank.
+
+        # If it is specified, then we have to pick the first word from the
+        # givenword bank.
         else:
             # First we have to adjust the A_start probabilities so that states
             # with lots of valid words have a higher probability of selection.
@@ -242,10 +256,10 @@ class HiddenMarkovModel:
                     count += self.O[z][idx] if idx in first_word_bank else 0
                 assert total != 0, 'Divide by zero!'
                 mod_A_start[z] = self.A_start[z] * count / total
-            assert mod_A_start.sum() != 0, 'Divide by zero!'
+            assert mod_A_start.sum() != 0, first_word_bank
             mod_A_start /= mod_A_start.sum()
 
-            states.append(np.random.choice(self.L, p=mod_A_start))
+            states[0] = np.random.choice(self.L, p=mod_A_start)
 
             # Now that we have the state, we have to adjust the probabilities
             # of each word given this state to only allow legal words.
@@ -257,7 +271,7 @@ class HiddenMarkovModel:
             assert obs_prob.sum() != 0, 'Divide by zero!'
             obs_prob /= obs_prob.sum()
 
-            emission.append(np.random.choice(self.D, p=obs_prob))
+            emission[0] = np.random.choice(self.D, p=obs_prob)
 
         # After we have set the first word to rhyme, we can build the rest of
         # the line afterword using the regular HMM algorithm.        
@@ -276,8 +290,8 @@ class HiddenMarkovModel:
             if syllable_count > n_syl:
                 # The last word may have a special end syllable count to still
                 # make it valid.
-                if syls[i2w[emission[-1]]][2] is not None:
-                    end_count = syls[i2w[emission[-1]]][2]
+                if syls[i2w[emission[-1]]][1] is not None:
+                    end_count = syls[i2w[emission[-1]]][1]
                     proper_count = syls[i2w[emission[-1]]][0]
                     syllable_count += end_count - proper_count
                 
@@ -294,7 +308,7 @@ class HiddenMarkovModel:
             if syllable_count == n_syl:
                 # If we have a proper syllable count and no funny stuff with
                 # the end word syllable counts, break and return.
-                if syls[i2w[emission[-1]]][2] is None:
+                if syls[i2w[emission[-1]]][1] is None:
                     break
                 # If there is some funny stuff, get rid of the last word and
                 # try again.
@@ -304,6 +318,7 @@ class HiddenMarkovModel:
                     syllable_count = prev_syl_count
                     continue
 
+        assert syllable_count == n_syl
         return emission, states
 
     def probability_alphas(self, x):
