@@ -8,7 +8,6 @@ import numpy as np
 import nltk
 from data_prep import *
 from HMM import HiddenMarkovModel, unsupervised_HMM
-from RNN import *
 
 nltk.download('cmudict')
 
@@ -32,7 +31,6 @@ if __name__ == '__main__':
     # Get the maximum word index is the number of words - 1.
     m = max([max(line) for line in X])
 
-    '''
     # Train the Hidden Markov Model.
     hmm = unsupervised_HMM(X, 20, 1)
 
@@ -54,18 +52,3 @@ if __name__ == '__main__':
     ## Present the masterpiece.
     for line in output:
         print(line)
-    '''
-    rnn = setup_rnn(sonnet_list) # Default temperature is 1.0 -> currently not even implemented
-    temperatures = [1.5, 0.75, 0.25]
-    
-    for temp in temperatures:
-        print("\nTEMPERATURE = ", temp)
-        print('#####################')
-        sequence = "shall i compare thee to a summer's day?\n"
-        print(sequence, end='')
-        
-        for i in range(200): # generate 200 characters
-            res = rnn.predict(sequence, temperature=temp)
-            print(res, end='')
-            sequence += res
-            sequence = sequence[1:]
